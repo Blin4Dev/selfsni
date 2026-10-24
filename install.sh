@@ -9,6 +9,10 @@
 # Без вопросов (для автоматизации):
 #   DOMAIN=node1.example.com PANEL_IP=1.2.3.4 bash install.sh
 #
+# Повторный запуск на уже настроенном сервере предложит режим обновления
+# (смена домена и/или IP панели). Без вопросов:
+#   UPDATE=1 DOMAIN=new.example.com PANEL_IP=5.6.7.8 bash install.sh
+#
 # Ноду (remnanode) скрипт НЕ ставит, но если она уже есть, сам добавит том /dev/shm и перезапустит её.
 
 set -euo pipefail
@@ -17,6 +21,8 @@ SOCK="/dev/shm/nginx.sock"
 WEBROOT="/var/www/selfsni"
 ACME_ROOT="/var/www/certbot"
 CONF="/etc/nginx/conf.d/selfsni.conf"
+STATE_DIR="/etc/selfsni"
+STATE="${STATE_DIR}/state"
 
 log()  { printf '\033[1;32m[+]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; }
@@ -40,21 +46,28 @@ ask() {
   printf -v "$var" '%s' "$val"
 }
 
+norm_domain() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]'; }
+valid_domain() { [[ $1 =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$ ]]; }
+norm_ips() { local x="${1//,/ }"; [[ -n ${x// /} ]] || return 0; printf '%s\n' $x | sort -u | tr '\n' ' ' | sed 's/ $//'; }
+valid_ips() {
+  local x="${1//,/ }" p
+  [[ -n ${x// /} ]] || return 1
+  for p in $x; do
+    [[ $p =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$ ]] || return 1
+  done
+}
+
 collect_input() {
   DOMAIN="${DOMAIN:-}"
   PANEL_IP="${PANEL_IP:-}"
 
   [[ -n $DOMAIN ]] || ask DOMAIN "Домен для selfsni (A-запись должна уже указывать на этот сервер): "
-  DOMAIN="$(printf '%s' "$DOMAIN" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
-  [[ $DOMAIN =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$ ]] || die "Некорректный домен: '$DOMAIN'"
+  DOMAIN="$(norm_domain "$DOMAIN")"
+  valid_domain "$DOMAIN" || die "Некорректный домен: '$DOMAIN'"
 
   [[ -n $PANEL_IP ]] || ask PANEL_IP "IP панели Remnawave (для порта 2222; можно несколько через пробел): "
-  PANEL_IP="${PANEL_IP//,/ }"
-  [[ -n ${PANEL_IP// /} ]] || die "IP панели обязателен"
-  local p
-  for p in $PANEL_IP; do
-    [[ $p =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$ ]] || die "Некорректный IP: $p"
-  done
+  PANEL_IP="$(norm_ips "$PANEL_IP")"
+  valid_ips "$PANEL_IP" || die "Некорректный или пустой IP панели"
 }
 
 check_dns() {
@@ -557,9 +570,148 @@ summary() {
 EOF
 }
 
+save_state() {
+  mkdir -p "$STATE_DIR"
+  cat > "$STATE" <<STATEEOF
+SELFSNI_DOMAIN="${DOMAIN}"
+SELFSNI_PANEL_IP="${PANEL_IP}"
+STATEEOF
+  chmod 600 "$STATE"
+}
+
+is_installed() {
+  [[ -f $STATE ]] && return 0
+  [[ -f $CONF ]] && grep -q 'listen unix' "$CONF"
+}
+
+# Заполняет OLD_DOMAIN и OLD_PANEL_IP: из state-файла, а если его нет (ставили старой версией), то из nginx и ufw.
+load_state() {
+  OLD_DOMAIN=""; OLD_PANEL_IP=""
+  if [[ -f $STATE ]]; then
+    # shellcheck disable=SC1090
+    source "$STATE"
+    OLD_DOMAIN="${SELFSNI_DOMAIN:-}"
+    OLD_PANEL_IP="${SELFSNI_PANEL_IP:-}"
+  else
+    OLD_DOMAIN="$(awk '/listen unix/{f=1} f && /server_name/{sub(/;$/,"",$2); print $2; exit}' "$CONF" 2>/dev/null || true)"
+    OLD_PANEL_IP="$(ufw status 2>/dev/null | awk '$1=="2222/tcp" && $2=="ALLOW" && $3 ~ /^[0-9.\/]+$/ {print $3}' | sort -u | tr '\n' ' ' || true)"
+    OLD_PANEL_IP="${OLD_PANEL_IP% }"
+  fi
+}
+
+ufw_set_panel_ips() {
+  local p
+  for p in $OLD_PANEL_IP; do
+    [[ " $PANEL_IP " == *" $p "* ]] && continue
+    ufw --force delete allow from "$p" to any port 2222 proto tcp || true
+  done
+  for p in $PANEL_IP; do
+    ufw allow from "$p" to any port 2222 proto tcp
+  done
+}
+
+update_mode() {
+  local new_domain new_ip dom_changed=0 ip_changed=0
+
+  new_domain="${ENV_DOMAIN:-}"
+  new_ip="${ENV_PANEL_IP:-}"
+  if [[ -z $new_domain && -z $new_ip ]]; then
+    ask new_domain "Новый домен (Enter = оставить ${OLD_DOMAIN}): "
+    ask new_ip "Новый IP панели (Enter = оставить ${OLD_PANEL_IP:-не определён}): "
+  fi
+
+  new_domain="$(norm_domain "${new_domain:-$OLD_DOMAIN}")"
+  new_ip="$(norm_ips "${new_ip:-$OLD_PANEL_IP}")"
+
+  valid_domain "$new_domain" || die "Некорректный домен: '$new_domain'"
+  valid_ips "$new_ip" || die "IP панели не определён или некорректен, укажи его явно"
+
+  [[ $new_domain != "$OLD_DOMAIN" ]] && dom_changed=1
+  [[ "$new_ip" != "$(norm_ips "$OLD_PANEL_IP")" ]] && ip_changed=1
+
+  if (( ! dom_changed && ! ip_changed )); then
+    warn "Ничего не изменилось. Для обновления нужно поменять домен или IP панели."
+    return 0
+  fi
+
+  CHANGED_DOMAIN=$dom_changed; CHANGED_IP=$ip_changed
+
+  # 1) IP панели: только правило UFW
+  DOMAIN="$OLD_DOMAIN"; PANEL_IP="$new_ip"
+  if (( ip_changed )); then
+    log "Обновляю правило UFW для порта 2222: ${OLD_PANEL_IP:-?} -> ${new_ip}"
+    ufw_set_panel_ips
+    save_state
+  fi
+
+  # 2) Домен: новый сертификат, сайт и конфиг nginx
+  if (( dom_changed )); then
+    DOMAIN="$new_domain"
+    check_dns
+    issue_cert                # при ошибке выходим до изменения конфига nginx: старый домен продолжает работать
+    setup_site
+    setup_nginx_final
+    save_state
+    if [[ -n $OLD_DOMAIN ]]; then
+      log "Удаляю сертификат старого домена $OLD_DOMAIN"
+      certbot delete --cert-name "$OLD_DOMAIN" --non-interactive >/dev/null 2>&1 \
+        || warn "Не удалось удалить сертификат $OLD_DOMAIN (не критично): certbot delete --cert-name $OLD_DOMAIN"
+    fi
+  fi
+
+  summary_update
+}
+
+summary_update() {
+  cat <<EOF2
+
+==================================================================
+ Обновление выполнено
+==================================================================
+EOF2
+  if (( CHANGED_DOMAIN )); then
+    cat <<EOF2
+ Домен:       ${OLD_DOMAIN} -> ${DOMAIN}
+              новый сертификат выпущен, сайт и nginx обновлены,
+              сертификат старого домена удалён
+
+ Осталось в панели:
+   - в Config Profile замени в "serverNames" этой ноды
+     ${OLD_DOMAIN} на ${DOMAIN} (оба inbound: 443 и 4443)
+   - в Hosts поменяй SNI/Host на ${DOMAIN}
+   - если у хостов в Address был старый домен, обнови и его
+EOF2
+  fi
+  if (( CHANGED_IP )); then
+    cat <<EOF2
+ IP панели:   ${OLD_PANEL_IP:-?} -> ${PANEL_IP}
+              порт 2222 теперь открыт только для: ${PANEL_IP}
+EOF2
+  fi
+  echo "=================================================================="
+}
+
 main() {
   [[ $EUID -eq 0 ]] || die "Запусти от root"
   command -v apt-get >/dev/null 2>&1 || die "Нужен Debian или Ubuntu"
+
+  # Значения из окружения запоминаем отдельно: в режиме обновления это новые значения
+  ENV_DOMAIN="${DOMAIN:-}"; ENV_PANEL_IP="${PANEL_IP:-}"
+  CHANGED_DOMAIN=0; CHANGED_IP=0
+
+  if is_installed; then
+    load_state
+    log "selfsni уже установлен на этом сервере."
+    echo "    Домен:       ${OLD_DOMAIN:-не определён}"
+    echo "    IP панели:   ${OLD_PANEL_IP:-не определён}"
+    local ans=""
+    if [[ ${UPDATE:-0} == 1 ]]; then ans="y"; else ask ans "Запустить режим обновления (смена домена и/или IP панели)? [y/N]: "; fi
+    [[ $ans =~ ^[Yy]$ ]] || { log "Ничего не меняю."; return 0; }
+    [[ -n $OLD_DOMAIN ]] || die "Не удалось определить текущий домен, обновление невозможно"
+    update_mode
+    return 0
+  fi
+
   collect_input
   check_dns
   setup_system
@@ -570,6 +722,7 @@ main() {
   issue_cert
   setup_nginx_final
   setup_node
+  save_state
   summary
 }
 
