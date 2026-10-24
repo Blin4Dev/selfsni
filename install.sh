@@ -9,7 +9,7 @@
 # Без вопросов (для автоматизации):
 #   DOMAIN=node1.example.com PANEL_IP=1.2.3.4 bash install.sh
 #
-# Ноду (remnanode) скрипт НЕ ставит.
+# Ноду (remnanode) скрипт НЕ ставит, но если она уже есть, сам добавит том /dev/shm и перезапустит её.
 
 set -euo pipefail
 
@@ -374,7 +374,162 @@ EOF
   [[ -S $SOCK ]] || warn "Сокет ${SOCK} не появился, проверь: systemctl status nginx"
 }
 
+# Добавляет том /dev/shm в сервис remnawave/node. Печатает новый файл в stdout.
+# Коды выхода: 0 изменено, 10 уже есть, 3 нестандартный volumes, 4 сервис не найден.
+patch_compose() {
+  awk -v item="'/dev/shm:/dev/shm'" '
+  function ind(s) { match(s, /^ */); return RLENGTH }
+  function blank(s) { return s ~ /^[ \t\r]*$/ }
+  function comment(s) { return s ~ /^ *#/ }
+  { L[NR] = $0 }
+  END {
+    n = NR; a = 0
+    for (i = 1; i <= n; i++) if (L[i] ~ /^ +image: *[^ ]*remnawave\/node/) { a = i; break }
+    if (a == 0) exit 4
+    K = ind(L[a])
+    e = a
+    for (i = a + 1; i <= n; i++) {
+      if (blank(L[i]) || comment(L[i])) continue
+      if (ind(L[i]) < K) break
+      e = i
+    }
+    s = a
+    for (i = a - 1; i >= 1; i--) {
+      if (blank(L[i]) || comment(L[i])) continue
+      if (ind(L[i]) < K) break
+      s = i
+    }
+    v = 0
+    for (i = s; i <= e; i++) {
+      if (L[i] ~ /\/dev\/shm/) exit 10
+      if (ind(L[i]) == K && L[i] ~ /^ +volumes:/) v = i
+    }
+    pad0 = sprintf("%" K "s", "")
+    pad  = sprintf("%" (K + 2) "s", "")
+    if (v > 0) {
+      rest = L[v]; sub(/^ +volumes: */, "", rest)
+      if (rest != "" && rest !~ /^#/) exit 3
+      for (j = v + 1; j <= e; j++) {
+        if (blank(L[j]) || comment(L[j])) continue
+        if (L[j] ~ /^ *- /) pad = sprintf("%" ind(L[j]) "s", "")
+        break
+      }
+      ins = v
+    } else {
+      ins = e
+    }
+    for (i = 1; i <= n; i++) {
+      print L[i]
+      if (i == ins) {
+        if (v == 0) print pad0 "volumes:"
+        print pad "- " item
+      }
+    }
+  }' "$1"
+}
+
+dc() {
+  if docker compose version >/dev/null 2>&1; then docker compose "$@"; else docker-compose "$@"; fi
+}
+
+find_node_compose() {
+  NODE_COMPOSE=""
+  command -v docker >/dev/null 2>&1 || return 1
+  local cfg dir f
+  if docker inspect --type container remnanode >/dev/null 2>&1; then
+    cfg="$(docker inspect --type container -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' remnanode 2>/dev/null || true)"
+    dir="$(docker inspect --type container -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' remnanode 2>/dev/null || true)"
+    cfg="${cfg%%,*}"
+    if [[ -n $cfg ]]; then
+      [[ $cfg == /* ]] || cfg="${dir}/${cfg}"
+      [[ -f $cfg ]] && NODE_COMPOSE="$cfg"
+    fi
+  fi
+  if [[ -z $NODE_COMPOSE ]]; then
+    for f in /opt/remnanode/docker-compose.yml /opt/remnanode/docker-compose.yaml \
+             /opt/remnanode/compose.yml /opt/remnanode/compose.yaml; do
+      if [[ -f $f ]] && grep -q 'remnawave/node' "$f"; then NODE_COMPOSE="$f"; break; fi
+    done
+  fi
+  [[ -n $NODE_COMPOSE ]]
+}
+
+# Если remnanode уже установлен: добавляем том /dev/shm и пересоздаём контейнер. Иначе пропускаем.
+setup_node() {
+  NODE_STATE="absent"; NODE_BAK=""; NODE_COMPOSE=""
+
+  if ! find_node_compose; then
+    if command -v docker >/dev/null 2>&1 && docker inspect --type container remnanode >/dev/null 2>&1; then
+      NODE_STATE="manual"
+      warn "Контейнер remnanode есть, но его docker-compose.yml не найден. Том нужно добавить вручную."
+    else
+      log "remnanode не установлен, пропускаю"
+    fi
+    return 0
+  fi
+
+  log "Найден remnanode: $NODE_COMPOSE"
+  local tmp rc=0 cid
+  tmp="$(mktemp)"
+  patch_compose "$NODE_COMPOSE" > "$tmp" || rc=$?
+  case $rc in
+    0) ;;
+    10) rm -f "$tmp"; NODE_STATE="already"; log "Том /dev/shm уже есть в compose, пропускаю"; return 0 ;;
+    *)  rm -f "$tmp"; NODE_STATE="manual"
+        warn "Не удалось автоматически изменить compose (код $rc). Том нужно добавить вручную."
+        return 0 ;;
+  esac
+
+  NODE_BAK="${NODE_COMPOSE}.bak-selfsni-$(date +%Y%m%d%H%M%S)"
+  cp -p "$NODE_COMPOSE" "$NODE_BAK"
+  cat "$tmp" > "$NODE_COMPOSE"
+  rm -f "$tmp"
+
+  if ! dc -f "$NODE_COMPOSE" config -q >/dev/null 2>&1; then
+    cp -p "$NODE_BAK" "$NODE_COMPOSE"
+    NODE_STATE="manual"
+    warn "После правки compose не прошёл проверку, вернул оригинал. Том нужно добавить вручную."
+    return 0
+  fi
+
+  log "Перезапуск remnanode (соединения на пару секунд оборвутся)"
+  if ! (cd "$(dirname "$NODE_COMPOSE")" && dc -f "$NODE_COMPOSE" up -d); then
+    NODE_STATE="failed"
+    warn "Не удалось перезапустить remnanode. Бэкап: $NODE_BAK"
+    return 0
+  fi
+
+  sleep 4
+  cid="$(dc -f "$NODE_COMPOSE" ps -q 2>/dev/null | head -n1 || true)"
+  [[ -n $cid ]] || cid="remnanode"
+  if docker exec "$cid" test -S "$SOCK" 2>/dev/null; then
+    NODE_STATE="ok"
+    log "Нода перезапущена, сокет виден внутри контейнера"
+  else
+    NODE_STATE="nosocket"
+    warn "Нода перезапущена, но сокет внутри контейнера не виден: docker exec remnanode ls -l ${SOCK}"
+  fi
+}
+
 summary() {
+  local node_msg
+  case ${NODE_STATE:-absent} in
+    ok)       node_msg="remnanode: том /dev/shm добавлен в ${NODE_COMPOSE}, нода перезапущена,
+    сокет виден внутри контейнера. Бэкап: ${NODE_BAK}" ;;
+    already)  node_msg="remnanode: том /dev/shm уже был в ${NODE_COMPOSE}, ничего не менял." ;;
+    nosocket) node_msg="remnanode: том добавлен и нода перезапущена, но сокет в контейнере не виден.
+    Проверь: docker exec remnanode ls -l ${SOCK}  (бэкап: ${NODE_BAK})" ;;
+    failed)   node_msg="remnanode: compose изменён, но перезапуск не удался. Бэкап: ${NODE_BAK}
+    Запусти вручную: cd $(dirname "${NODE_COMPOSE}") && docker compose up -d" ;;
+    manual)   node_msg="remnanode: автоматически не получилось. Добавь в docker-compose.yml ноды:
+      volumes:
+        - '/dev/shm:/dev/shm'
+    и выполни: docker compose up -d" ;;
+    *)        node_msg="remnanode не найден. При установке ноды добавь в её docker-compose.yml:
+      volumes:
+        - '/dev/shm:/dev/shm'" ;;
+  esac
+
   cat <<EOF
 
 ==================================================================
@@ -386,24 +541,18 @@ summary() {
  UFW:         22, 80, 443, 4443, 8443 для всех; 2222 только для: ${PANEL_IP}
  BBR:         включён
 
- Дальше (ноду ставишь сам):
+ ${node_msg}
 
- 1) В docker-compose.yml ноды добавь том, чтобы контейнер видел сокет:
-      volumes:
-        - '/dev/shm:/dev/shm'
-    Проверка после запуска ноды:
-      docker exec remnanode ls -l ${SOCK}
-
- 2) В Config Profile (Reality inbound на 443):
+ Осталось в панели: Config Profile (Reality inbound на 443):
       "realitySettings": {
         "target": "${SOCK}",
         "xver": 1,
         "serverNames": ["${DOMAIN}"],
         ...privateKey и shortIds как обычно...
       }
-    Если панель не принимает "target", используй "dest".
+ Если панель не принимает "target", используй "dest".
 
- 3) Проверка: открой https://${DOMAIN} в браузере (после запуска ноды).
+ Проверка: открой https://${DOMAIN} в браузере (после применения профиля).
 ==================================================================
 EOF
 }
@@ -420,6 +569,7 @@ main() {
   setup_nginx_http
   issue_cert
   setup_nginx_final
+  setup_node
   summary
 }
 
