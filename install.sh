@@ -28,15 +28,54 @@ log()  { printf '\033[1;32m[+]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
 
-# Темы сайта: brand|accent|tagline|lead|c1t|c1d|c2t|c2d|c3t|c3d|about|s1v|s1l|s2v|s2l|s3v|s3l
+# Темы сайта (стиль "edge-нода"): accent|role|title|lead|net|pos|c1t|c1d|c2t|c2d|c3t|c3d|about
+# Страна и город подставляются автоматически (detect_location), в темах их нет.
 # Тема выбирается по хэшу домена, поэтому у разных нод сайты разные.
 THEMES=(
-"Northwind Studio|#4f46e5|Design for products people enjoy using|We are a small independent studio helping teams shape interfaces, brands and design systems that stay clear as they grow.|Product design|Research-backed interface and interaction design for web and mobile.|Brand identity|Logos, typography and visual language that hold together across every channel.|Design systems|Component libraries and documentation your team can actually maintain.|Founded by two designers who got tired of handoffs that lose the idea along the way, we work in small teams and stay close to the people building the product.|11|years in practice|140+|projects shipped|9|countries"
-"Harbor &amp; Pine|#0f766e|Architecture and interiors with a quiet point of view|A boutique bureau working on residential, hospitality and small public buildings, from the first sketch to the last handrail.|Residential|Houses and apartments planned around daylight, materials and everyday routines.|Hospitality|Cafés, small hotels and workplaces with a clear and welcoming character.|Renovation|Careful reuse of existing buildings, with honest budgets and schedules.|We keep the team small on purpose. Every project is led by a partner, drawn by hand before it is modelled, and visited on site until it is finished.|16|years of practice|85|buildings completed|4|design awards"
-"Ledgerly|#b45309|Bookkeeping that finally keeps up with your business|Cloud accounting and payroll support for small companies, with real people who answer within one working day.|Bookkeeping|Monthly reconciliation, clean ledgers and reports you can read without a degree.|Payroll|On-time payroll, contractor payments and year-end filings handled for you.|Advisory|Cash-flow planning and tax guidance when you are ready to grow.|Ledgerly started as a side project to help a few local shops. Today we support several hundred small businesses with a team of accountants and engineers.|7|years in business|450|companies supported|24h|average response time"
-"Sundial Analytics|#be123c|Data consulting for teams that prefer clear answers|We help mid-sized companies turn scattered spreadsheets and logs into dashboards and forecasts that people trust.|Data audit|A short, structured review of where your data lives and what it can tell you.|Dashboards|Practical reporting for operations, sales and finance, built on your own tools.|Forecasting|Demand and capacity models explained in plain language, not jargon.|Our consultants come from engineering, statistics and operations. We prefer small, well-defined projects with measurable outcomes over long engagements.|9|years of experience|60+|client projects|12|industries"
-"Fernwood Coffee Roasters|#15803d|Small-batch coffee, roasted every week|Single-origin beans from farms we know by name, roasted in small batches and shipped within days.|Whole beans|Seasonal single origins and house blends for espresso and filter brewing.|Subscriptions|Fresh coffee on your schedule. Pause, skip or change the roast any time.|Wholesale|Beans and barista training for cafés, offices and restaurants.|We started with a second-hand roaster in a converted garage. We still taste every batch before it ships, and we publish where each coffee comes from.|8|years roasting|22|partner farms|300|cafés supplied"
+"#22d3ee|Edge-кэш|Edge-узел кэширования|Узел отдаёт закэшированный контент ближе к посетителям и защищает исходные серверы от повторной нагрузки. Ответы передаются по HTTP/2 поверх TLS 1.3.|Anycast|Edge / Кэш|Умное кэширование|Статика и повторяющиеся ответы хранятся на периферии и обновляются в фоновом режиме.|Защита источника|До исходного сервера доходят только промахи кэша, поэтому нагрузка остаётся ровной даже при пиках.|Быстрая доставка|Короткие сетевые пути и постоянные соединения сокращают время до первого байта.|Узел входит в распределённую сеть доставки контента. Он постоянно мониторится и автоматически выводится из ротации, если проверки состояния не проходят."
+"#a78bfa|API-шлюз|Узел API-шлюза|Региональный шлюз завершает TLS-соединения, проверяет запросы и маршрутизирует трафик к внутренним сервисам с предсказуемой задержкой.|Региональная|Edge / Шлюз|Терминация TLS|Современные шифры, автоматическое продление сертификатов и строгие транспортные настройки.|Маршрутизация запросов|Трафик распределяется между исправными бэкендами с автоматическим переключением при сбоях.|Ограничение частоты|Лимиты на клиента сглаживают всплески и защищают общие сервисы.|Шлюз не хранит состояние и может быть заменён без простоя. Конфигурация версионируется и применяется к узлам постепенно."
+"#34d399|Фильтрация трафика|Узел фильтрации трафика|Входящий трафик проверяется на границе сети. Некорректные и вредоносные запросы отбрасываются до того, как достигнут защищаемых сервисов.|Anycast|Edge / Фильтр|Защита от объёмных атак|Потоки мусорного трафика поглощаются и отбрасываются на периферии, вдали от защищаемой сети.|Проверка протоколов|Некорректные пакеты и злоупотребления рукопожатием отсекаются до того, как их увидит приложение.|Чистая передача|Легитимные запросы передаются дальше с минимальной добавленной задержкой.|Правила фильтрации обновляются непрерывно и проверяются на записанном трафике перед запуском."
+"#fbbf24|Anycast-ретранслятор|Узел Anycast-ретрансляции|Точка ретрансляции в anycast-сети. Посетители направляются на ближайший исправный узел, а запросы пересылаются по приватным каналам.|Anycast|Edge / Ретранслятор|Маршрутизация к ближайшему узлу|Запросы попадают в ближайшую доступную точку присутствия, что сокращает путь для большинства пользователей.|Приватные каналы|Трафик между узлами идёт по выделенным линиям, а не по открытому интернету.|Автоматическое переключение|Если узел деградирует, его трафик за секунды переходит к соседним.|Все ретрансляторы анонсируют одно и то же адресное пространство. Перед приёмом трафика состояние узла проверяется из нескольких точек."
+"#fb7185|Балансировщик|Узел балансировки нагрузки|Узел распределяет входящие соединения по пулу бэкендов и оставляет сессии только на исправных серверах.|Региональная|Edge / Балансировщик|Балансировка с учётом состояния|Бэкенды постоянно проверяются и исключаются из пула, как только перестают отвечать.|Переиспользование соединений|Долгоживущие соединения к бэкендам снижают накладные расходы на рукопожатия под нагрузкой.|Плавный вывод из работы|Обслуживание проходит без обрыва активных сессий.|Состав пула и веса управляются централизованно. Изменения применяются по одному узлу и автоматически откатываются при ошибках."
 )
+
+# Поля из JSON-ответа геолокации (без jq) и очистка значения для вставки в HTML.
+geo_field() { printf '%s' "$1" | grep -o "\"$2\":\"[^\"]*\"" | head -n1 | sed -E "s/^\"$2\":\"//;s/\"\$//" || true; }
+geo_clean() { printf '%s' "$1" | tr -d '<>&"\\|$`' | sed -E 's/^ +//;s/ +$//' | cut -c1-60; }
+
+# Определяет страну и город сервера по его внешнему IP (на русском).
+# Можно задать вручную: SITE_COUNTRY="Германия" SITE_CITY="Франкфурт" SITE_CC=DE
+detect_location() {
+  GEO_COUNTRY="$(geo_clean "${SITE_COUNTRY:-}")"
+  GEO_CITY="$(geo_clean "${SITE_CITY:-}")"
+  GEO_CC="${SITE_CC:-}"
+  local j=""
+
+  if [[ -z $GEO_COUNTRY ]] && command -v curl >/dev/null 2>&1; then
+    j="$(curl -4 -fsS --max-time 6 'http://ip-api.com/json/?lang=ru&fields=status,country,countryCode,city' 2>/dev/null || true)"
+    if [[ $j == *'"status":"success"'* ]]; then
+      GEO_COUNTRY="$(geo_clean "$(geo_field "$j" country)")"
+      GEO_CITY="$(geo_clean "$(geo_field "$j" city)")"
+      GEO_CC="$(geo_field "$j" countryCode)"
+    else
+      j="$(curl -4 -fsS --max-time 6 'https://ipwho.is/?lang=ru&fields=success,country,country_code,city' 2>/dev/null || true)"
+      if [[ $j == *'"success":true'* ]]; then
+        GEO_COUNTRY="$(geo_clean "$(geo_field "$j" country)")"
+        GEO_CITY="$(geo_clean "$(geo_field "$j" city)")"
+        GEO_CC="$(geo_field "$j" country_code)"
+      fi
+    fi
+  fi
+
+  [[ $GEO_CC =~ ^[A-Za-z]{2}$ ]] || GEO_CC=""
+  GEO_CC="${GEO_CC^^}"
+
+  if [[ -n $GEO_COUNTRY ]]; then
+    log "Локация сервера: ${GEO_COUNTRY}${GEO_CITY:+, $GEO_CITY}"
+  else
+    warn "Не удалось определить локацию сервера, на сайте она не будет указана (можно задать SITE_COUNTRY / SITE_CITY / SITE_CC)"
+  fi
+}
 
 ask() {
   local var="$1" prompt="$2" val=""
@@ -131,136 +170,258 @@ EOF
   fi
 }
 
+# Шрифты лежат на самом сервере: посетители не обращаются к сторонним CDN.
+# Скачиваются при установке; если не вышло, сайт использует системные шрифты.
+FONT_CDN="https://cdn.jsdelivr.net/fontsource/fonts"
+FONT_LAT="U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
+FONT_CYR="U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116"
+
+fetch_font() {
+  local name="$1" url="$2" dst="${WEBROOT}/fonts/$1"
+  if [[ -s $dst && "$(head -c4 "$dst" 2>/dev/null)" == "wOF2" ]]; then return 0; fi
+  rm -f "$dst" "$dst.tmp"
+  command -v curl >/dev/null 2>&1 || return 1
+  if curl -fsSL --max-time 25 -o "$dst.tmp" "$url" 2>/dev/null \
+     && [[ "$(head -c4 "$dst.tmp" 2>/dev/null)" == "wOF2" ]]; then
+    mv -f "$dst.tmp" "$dst"
+    return 0
+  fi
+  rm -f "$dst.tmp"
+  return 1
+}
+
+setup_fonts() {
+  log "Загрузка шрифта Unbounded на сервер"
+  mkdir -p "$WEBROOT/fonts"
+  rm -f "$WEBROOT"/fonts/inter-*.woff2 "$WEBROOT"/fonts/jbmono-*.woff2   # шрифты прошлых версий
+  local ok=0
+  fetch_font unbounded-latin.woff2    "${FONT_CDN}/unbounded:vf@5.3.0/latin-wght-normal.woff2"    && ok=$((ok+1)) || true
+  fetch_font unbounded-cyrillic.woff2 "${FONT_CDN}/unbounded:vf@5.3.0/cyrillic-wght-normal.woff2" && ok=$((ok+1)) || true
+  chmod -R a+rX "$WEBROOT/fonts"
+  (( ok == 2 )) || warn "Скачано шрифтов: ${ok} из 2. Недостающие заменятся системными, сайт останется рабочим."
+}
+
 render_site() {
-  local idx BRAND ACCENT TAGLINE LEAD C1T C1D C2T C2D C3T C3D ABOUT S1V S1L S2V S2L S3V S3L
-  idx=$(( $(printf '%s' "$DOMAIN" | cksum | cut -d' ' -f1) % ${#THEMES[@]} ))
-  IFS='|' read -r BRAND ACCENT TAGLINE LEAD C1T C1D C2T C2D C3T C3D ABOUT S1V S1L S2V S2L S3V S3L <<< "${THEMES[$idx]}"
+  local h idx ACCENT ROLE TITLE LEAD NET POS C1T C1D C2T C2D C3T C3D ABOUT
+  h="$(printf '%s' "$DOMAIN" | cksum | cut -d' ' -f1)"
+  idx=$(( h % ${#THEMES[@]} ))
+  IFS='|' read -r ACCENT ROLE TITLE LEAD NET POS C1T C1D C2T C2D C3T C3D ABOUT <<< "${THEMES[$idx]}"
+
+  detect_location
+
+  local BRAND
+  BRAND="$(geo_clean "${SITE_BRAND:-AnyCDN}")"
 
   local ACCENT_URL="%23${ACCENT#\#}"
-  local YEAR INITIAL
+  local YEAR NODE_ID REGION EYEBROW CC_CHIP FOOT_LOC
   YEAR="$(date +%Y)"
-  INITIAL="${BRAND:0:1}"
+  NODE_ID="$(printf '%s-%02d' "${GEO_CC:-edge}" $(( h % 90 + 10 )))"
+  NODE_ID="${NODE_ID,,}"
+
+  if [[ -n $GEO_COUNTRY ]]; then
+    REGION="$GEO_COUNTRY"
+    [[ -n $GEO_CITY ]] && REGION="${GEO_COUNTRY} (${GEO_CITY})"
+    EYEBROW="${ROLE} &middot; ${GEO_COUNTRY} &middot; ${NODE_ID}"
+    FOOT_LOC="${NODE_ID} &middot; ${GEO_COUNTRY}"
+  else
+    REGION="Распределённая сеть"
+    EYEBROW="${ROLE} &middot; ${NODE_ID}"
+    FOOT_LOC="${NODE_ID}"
+  fi
+  local FONT_CSS="" PRELOAD="" spec fam wt file rng
+  for spec in \
+    "Unbounded|200 900|unbounded-latin.woff2|${FONT_LAT}" \
+    "Unbounded|200 900|unbounded-cyrillic.woff2|${FONT_CYR}"; do
+    IFS='|' read -r fam wt file rng <<< "$spec"
+    [[ -s "$WEBROOT/fonts/$file" ]] || continue
+    FONT_CSS+="@font-face{font-family:'${fam}';font-style:normal;font-weight:${wt};font-display:swap;src:url(/fonts/${file}) format('woff2');unicode-range:${rng}}"$'\n'
+    PRELOAD+="<link rel=\"preload\" href=\"/fonts/${file}\" as=\"font\" type=\"font/woff2\" crossorigin>"$'\n'
+  done
+
+  CC_CHIP=""
+  [[ -n $GEO_CC ]] && CC_CHIP="<span class=\"chip\">${GEO_CC}</span>"
 
   mkdir -p "$WEBROOT"
 
-  cat > "$WEBROOT/index.html" <<EOF
+  cat > "$WEBROOT/index.html" <<HTML
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${BRAND} | ${TAGLINE}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>${BRAND} &middot; ${TITLE} &middot; ${NODE_ID}</title>
 <meta name="description" content="${LEAD}">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='${ACCENT_URL}'/%3E%3C/svg%3E">
-<style>
-:root{--accent:${ACCENT};--bg:#ffffff;--fg:#1c1f26;--muted:#5b6270;--card:#f5f6f8;--line:#e3e5ea}
-@media (prefers-color-scheme:dark){:root{--bg:#111318;--fg:#e8eaee;--muted:#9aa1ae;--card:#1a1d24;--line:#2a2e37}}
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='none' stroke='${ACCENT_URL}' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='5' fill='${ACCENT_URL}'/%3E%3C/svg%3E">
+${PRELOAD}<style>
+${FONT_CSS}:root{--accent:${ACCENT};--bg:#06080c;--panel:#0c1118;--panel2:#10161f;--line:#1b2330;--fg:#e7eaf0;--muted:#8792a5;--ok:#34d399;
+--font:"Unbounded",system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+--acc-text:color-mix(in srgb,var(--accent) 80%,var(--fg))}
+@media (prefers-color-scheme:light){:root{--bg:#f5f6f9;--panel:#fff;--panel2:#eef0f4;--line:#dde1e9;--fg:#11151c;--muted:#5b6475;--ok:#059669;--acc-text:color-mix(in srgb,var(--accent) 55%,#000)}}
 *{box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{margin:0;font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg)}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;min-height:100vh;font:300 14px/1.8 var(--font);background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;overflow-x:hidden;
+padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0)}
+b,strong{font-weight:300}
+h1,h2,h3,p,strong{overflow-wrap:anywhere}
+body::before{content:"";position:fixed;inset:0;z-index:-2;
+background:radial-gradient(60% 45% at 50% -5%,color-mix(in srgb,var(--accent) 22%,transparent),transparent 70%)}
+body::after{content:"";position:fixed;inset:0;z-index:-1;opacity:.55;
+background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+background-size:56px 56px;-webkit-mask-image:radial-gradient(70% 55% at 50% 0%,#000,transparent);mask-image:radial-gradient(70% 55% at 50% 0%,#000,transparent)}
 a{color:inherit;text-decoration:none}
 .wrap{max-width:1040px;margin:0 auto;padding:0 24px}
-header{border-bottom:1px solid var(--line)}
-.nav{display:flex;align-items:center;justify-content:space-between;height:64px}
-.brand{display:flex;align-items:center;gap:10px;font-weight:650}
-.logo{width:28px;height:28px;border-radius:8px;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:15px;font-weight:700}
-nav a{margin-left:24px;color:var(--muted);font-size:15px}
-nav a:hover{color:var(--fg)}
-.hero{padding:96px 0 72px}
-.hero h1{font-size:clamp(32px,5vw,52px);line-height:1.1;margin:0 0 20px;max-width:16em;letter-spacing:-.02em}
-.hero p{font-size:19px;color:var(--muted);max-width:36em;margin:0 0 32px}
-.btn{display:inline-block;padding:12px 22px;border-radius:10px;font-weight:600;font-size:15px}
-.btn.primary{background:var(--accent);color:#fff}
-.btn.ghost{border:1px solid var(--line);margin-left:10px}
-section{padding:56px 0}
-h2{font-size:28px;margin:0 0 28px;letter-spacing:-.01em}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px}
-.card h3{margin:0 0 8px;font-size:18px}
-.card p{margin:0;color:var(--muted);font-size:15px}
-.dot{width:10px;height:10px;border-radius:50%;background:var(--accent);margin-bottom:16px}
-.about{display:grid;grid-template-columns:1.4fr 1fr;gap:48px;align-items:start}
-.about p{color:var(--muted);margin:0}
-.stats{display:grid;gap:16px}
-.stat{border-left:3px solid var(--accent);padding-left:16px}
-.stat b{display:block;font-size:26px}
-.stat span{color:var(--muted);font-size:14px}
-.contact{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:36px;display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center}
-.contact h2{margin:0}
-.contact p{margin:4px 0 0;color:var(--muted)}
-footer{padding:32px 0 48px;color:var(--muted);font-size:14px}
-@media(max-width:720px){.about{grid-template-columns:1fr;gap:28px}.hero{padding:64px 0 48px}nav a{margin-left:16px}.btn.ghost{margin:10px 0 0}}
+header{padding:22px 0}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.brand{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--muted);min-width:0}
+.brand b{color:var(--fg);font-size:16px;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
+.brand .host{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:12px;border-left:1px solid var(--line)}
+.mark{flex:none;width:30px;height:30px}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border:1px solid var(--line);border-radius:999px;background:var(--panel);font-size:11px;color:var(--muted);white-space:nowrap}
+.dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 color-mix(in srgb,var(--ok) 60%,transparent);animation:pulse 2.2s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 8px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.hero{padding:64px 0 44px}
+.eyebrow{display:inline-block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--acc-text);margin-bottom:20px}
+h1{font-size:clamp(22px,3.8vw,38px);font-weight:600;line-height:1.25;letter-spacing:-.025em;margin:0 0 22px;max-width:20em}
+h1 span{color:var(--acc-text)}
+.lead{font-size:15px;line-height:1.85;color:var(--muted);max-width:40em;margin:0}
+.spec{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin:40px 0 0;background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+.cell{background:var(--panel);padding:18px 22px;min-width:0}
+.cell small{display:block;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.cell strong{font-size:13.5px;line-height:1.55}
+.cell .ok{display:inline-flex;align-items:center;gap:8px;color:var(--ok)}
+section{padding:40px 0}
+.title{display:flex;align-items:baseline;gap:12px;margin:0 0 22px}
+.title h2{margin:0;font-size:18px;font-weight:500;line-height:1.35;letter-spacing:-.015em}
+.title i{font-size:11px;color:var(--muted);font-style:normal}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px;transition:border-color .2s,transform .2s;min-width:0}
+.card:hover{border-color:color-mix(in srgb,var(--accent) 55%,var(--line));transform:translateY(-2px)}
+.ico{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;margin-bottom:18px;color:var(--acc-text);background:color-mix(in srgb,var(--accent) 14%,transparent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent)}
+.ico svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.card h3{margin:0 0 10px;font-size:14.5px;font-weight:500;line-height:1.45}
+.card p{margin:0;color:var(--muted);font-size:13px;line-height:1.85}
+.split{display:grid;grid-template-columns:1.2fr 1fr;gap:16px;align-items:stretch}
+.about{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:28px;min-width:0}
+.about p{margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.85}
+.about p:last-of-type{margin:0}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+.chip{font-size:10.5px;padding:5px 11px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+.term{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden;font-size:12px;line-height:2.1;min-width:0}
+.term header{padding:12px 18px;border-bottom:1px solid var(--line);display:flex;gap:7px;align-items:center;color:var(--muted);font-size:11px}
+.term header i{width:10px;height:10px;border-radius:50%;background:var(--line)}
+.term header span{margin-left:8px}
+.rows{padding:14px 18px}
+.row{display:flex;justify-content:space-between;gap:12px}
+.row span{color:var(--muted)}
+.row b{text-align:right}
+.row .g{color:var(--ok)}
+footer{padding:36px 0 44px;border-top:1px solid var(--line);margin-top:24px;color:var(--muted);font-size:11px}
+.foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px}
+@media(max-width:760px){.spec{grid-template-columns:repeat(2,1fr)}.split{grid-template-columns:1fr}.hero{padding:44px 0 30px}}
+@media(max-width:560px){.spec{grid-template-columns:1fr}.brand .host{display:none}.row{flex-wrap:wrap}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}html{scroll-behavior:auto}}
 </style>
 </head>
 <body>
-<header>
-  <div class="wrap nav">
-    <a class="brand" href="/"><span class="logo">${INITIAL}</span>${BRAND}</a>
-    <nav><a href="#services">Services</a><a href="#about">About</a><a href="#contact">Contact</a></nav>
-  </div>
-</header>
-<main>
-  <div class="wrap hero">
-    <h1>${TAGLINE}</h1>
-    <p>${LEAD}</p>
-    <a class="btn primary" href="#contact">Get in touch</a><a class="btn ghost" href="#services">Our services</a>
-  </div>
-  <section id="services">
-    <div class="wrap">
-      <h2>What we do</h2>
+<div class="wrap">
+  <header>
+    <div class="bar">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 32 32" fill="none" aria-hidden="true"><circle cx="16" cy="16" r="14" stroke="var(--accent)" stroke-opacity=".35" stroke-width="2"/><circle cx="16" cy="16" r="9" stroke="var(--accent)" stroke-opacity=".7" stroke-width="2"/><circle cx="16" cy="16" r="4" fill="var(--accent)"/></svg>
+        <b>${BRAND}</b><span class="host">${DOMAIN}</span>
+      </div>
+      <span class="pill"><span class="dot"></span>Работает</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <span class="eyebrow">${EYEBROW}</span>
+      <h1>${TITLE}<span>.</span></h1>
+      <p class="lead">${LEAD}</p>
+
+      <div class="spec">
+        <div class="cell"><small>Роль</small><strong>${ROLE}</strong></div>
+        <div class="cell"><small>Локация</small><strong>${REGION}</strong></div>
+        <div class="cell"><small>Сеть</small><strong>${NET}</strong></div>
+        <div class="cell"><small>Позиция</small><strong>${POS}</strong></div>
+        <div class="cell"><small>Протоколы</small><strong>HTTP/2 &middot; TLS 1.3</strong></div>
+        <div class="cell"><small>Состояние</small><strong class="ok"><span class="dot"></span>Онлайн</strong></div>
+      </div>
+    </div>
+
+    <section>
+      <div class="title"><h2>Что делает узел</h2><i>// ${NODE_ID}</i></div>
       <div class="grid">
-        <div class="card"><div class="dot"></div><h3>${C1T}</h3><p>${C1D}</p></div>
-        <div class="card"><div class="dot"></div><h3>${C2T}</h3><p>${C2D}</p></div>
-        <div class="card"><div class="dot"></div><h3>${C3T}</h3><p>${C3D}</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 5-3.2 8.4-7 10-3.8-1.6-7-5-7-10V6z"/></svg></div><h3>${C1T}</h3><p>${C1D}</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><path d="M13 2L5 14h6l-1 8 8-12h-6z"/></svg></div><h3>${C2T}</h3><p>${C2D}</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg></div><h3>${C3T}</h3><p>${C3D}</p></div>
       </div>
-    </div>
-  </section>
-  <section id="about">
-    <div class="wrap about">
-      <div><h2>About us</h2><p>${ABOUT}</p></div>
-      <div class="stats">
-        <div class="stat"><b>${S1V}</b><span>${S1L}</span></div>
-        <div class="stat"><b>${S2V}</b><span>${S2L}</span></div>
-        <div class="stat"><b>${S3V}</b><span>${S3L}</span></div>
+    </section>
+
+    <section>
+      <div class="split">
+        <div class="about">
+          <div class="title"><h2>Об узле</h2></div>
+          <p>${ABOUT}</p>
+          <p>Трафик обрабатывается автоматически. Пользовательские данные на этом сервере не хранятся, интерактивного содержимого здесь нет.</p>
+          <div class="chips">${CC_CHIP}<span class="chip">${NET}</span><span class="chip">${POS}</span><span class="chip">TLS 1.3</span></div>
+        </div>
+        <div class="term">
+          <header><i></i><i></i><i></i><span>состояние узла</span></header>
+          <div class="rows">
+            <div class="row"><span>узел</span><b>${NODE_ID}</b></div>
+            <div class="row"><span>сеть</span><b class="g">работает</b></div>
+            <div class="row"><span>сертификат</span><b class="g">действителен</b></div>
+            <div class="row"><span>проверки</span><b class="g">пройдены</b></div>
+            <div class="row"><span>время сервера</span><b id="utc">--:--:-- UTC</b></div>
+          </div>
+        </div>
       </div>
-    </div>
-  </section>
-  <section id="contact">
-    <div class="wrap">
-      <div class="contact">
-        <div><h2>Let&rsquo;s talk</h2><p>Tell us about your project and we will reply within two working days.</p></div>
-        <a class="btn primary" href="mailto:hello@${DOMAIN}">hello@${DOMAIN}</a>
-      </div>
-    </div>
-  </section>
-</main>
-<footer>
-  <div class="wrap">&copy; ${YEAR} ${BRAND}. All rights reserved.</div>
-</footer>
+    </section>
+  </main>
+
+  <footer>
+    <div class="foot"><span>${FOOT_LOC}</span><span>&copy; ${YEAR} ${BRAND}</span></div>
+  </footer>
+</div>
+<script>
+(function(){var t=document.getElementById('utc');if(!t)return;
+function p(n){return n<10?'0'+n:''+n}
+function u(){var d=new Date();t.textContent=p(d.getUTCHours())+':'+p(d.getUTCMinutes())+':'+p(d.getUTCSeconds())+' UTC'}
+u();setInterval(u,1000)})();
+</script>
 </body>
 </html>
-EOF
+HTML
 
-  cat > "$WEBROOT/404.html" <<EOF
+  cat > "$WEBROOT/404.html" <<HTML
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Page not found | ${BRAND}</title>
+<meta name="color-scheme" content="dark light">
+${PRELOAD}<title>404 &middot; ${BRAND}</title>
 <style>
-body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:#fff;color:#1c1f26;text-align:center}
-@media (prefers-color-scheme:dark){body{background:#111318;color:#e8eaee}}
-h1{font-size:64px;margin:0;color:${ACCENT}}
-p{color:#8a919e}
-a{color:${ACCENT};text-decoration:none;font-weight:600}
+${FONT_CSS}:root{--accent:${ACCENT};--bg:#06080c;--fg:#e7eaf0;--muted:#8792a5;--line:#1b2330;--panel:#0c1118;--font:"Unbounded",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+@media (prefers-color-scheme:light){:root{--bg:#f5f6f9;--fg:#11151c;--muted:#5b6475;--line:#dde1e9;--panel:#fff}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;font:300 14px/1.8 var(--font);background:radial-gradient(60% 45% at 50% 0%,color-mix(in srgb,var(--accent) 18%,transparent),transparent 70%),var(--bg);color:var(--fg)}
+.box{text-align:center;max-width:420px;padding:40px 32px;background:var(--panel);border:1px solid var(--line);border-radius:18px}
+small{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+h1{font:600 64px/1 var(--font);margin:16px 0;letter-spacing:-.03em;color:color-mix(in srgb,var(--accent) 80%,var(--fg))}
+p{color:var(--muted);margin:0 0 24px;font-size:13px;line-height:1.8}
+a{display:inline-block;padding:10px 20px;border:1px solid var(--line);border-radius:10px;font-size:12px;color:var(--fg);text-decoration:none}
+a:hover{border-color:var(--accent)}
 </style>
 </head>
 <body>
-<div><h1>404</h1><p>The page you are looking for does not exist.</p><a href="/">Back to home</a></div>
+<div class="box"><small>${BRAND} &middot; ${NODE_ID}</small><h1>404</h1><p>Запрошенный ресурс не найден на этом узле.</p><a href="/">&larr; На главную</a></div>
 </body>
 </html>
-EOF
+HTML
 
   printf 'User-agent: *\nAllow: /\n' > "$WEBROOT/robots.txt"
   chmod -R a+rX "$WEBROOT"
@@ -268,6 +429,7 @@ EOF
 
 setup_site() {
   log "Создание сайта-маскировки"
+  setup_fonts
   render_site
 }
 
@@ -371,6 +533,11 @@ ${h2_directive}
     root ${WEBROOT};
     index index.html;
 
+    location /fonts/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy same-origin always;
+    }
     location / {
         try_files \$uri \$uri/ =404;
     }
