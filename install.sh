@@ -2,6 +2,7 @@
 #
 # selfsni: Reality selfsteal для нод Remnawave
 # nginx (unix-сокет) + Let's Encrypt + сайт-маскировка + UFW + BBR
+# + подготовка узла к Hysteria2 (UDP 443, буферы UDP, сертификат внутри remnanode)
 #
 # Запуск:
 #   bash <(curl -Ls https://raw.githubusercontent.com/Blin4Dev/selfsni/refs/heads/main/install.sh)
@@ -10,10 +11,11 @@
 #   DOMAIN=node1.example.com PANEL_IP=1.2.3.4 bash install.sh
 #
 # Повторный запуск на уже настроенном сервере предложит режим обновления
-# (смена домена и/или IP панели). Без вопросов:
+# (подготовка Hysteria2 на уже установленном узле, смена домена и/или IP панели). Без вопросов:
 #   UPDATE=1 DOMAIN=new.example.com PANEL_IP=5.6.7.8 bash install.sh
 #
-# Ноду (remnanode) скрипт НЕ ставит, но если она уже есть, сам добавит том /dev/shm и перезапустит её.
+# Ноду (remnanode) скрипт НЕ ставит, но если она уже есть, сам добавит в неё тома
+# /dev/shm (сокет nginx) и /etc/letsencrypt (сертификат для Hysteria2) и перезапустит её.
 
 set -euo pipefail
 
@@ -146,12 +148,41 @@ setup_ufw() {
   for p in $ssh_ports; do ufw allow "${p}/tcp"; done   # на случай нестандартного SSH-порта
   ufw allow 80/tcp     # выпуск и продление сертификата (HTTP-01)
   ufw allow 443/tcp
+  ufw allow 443/udp    # Hysteria2 (QUIC)
   ufw allow 4443/tcp
   ufw allow 8443/tcp
   for p in $PANEL_IP; do
     ufw allow from "$p" to any port 2222 proto tcp
   done
   ufw --force enable
+}
+
+# Хук продления сертификата: перезагружает nginx и перезапускает remnanode,
+# чтобы Xray (Hysteria2) подхватил новый сертификат.
+write_renew_hook() {
+  mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+  cat > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh <<'EOF'
+#!/bin/sh
+systemctl reload nginx
+if command -v docker >/dev/null 2>&1 && docker inspect --type container remnanode >/dev/null 2>&1; then
+  docker restart remnanode >/dev/null 2>&1 || true
+fi
+EOF
+  chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+}
+
+# Всё, что нужно узлу вне конфига Xray для Hysteria2: UDP 443, буферы UDP, хук продления.
+# Безопасно запускать повторно.
+setup_hysteria() {
+  log "Подготовка узла к Hysteria2 (UDP 443, буферы UDP, хук продления сертификата)"
+  ufw allow 443/udp >/dev/null 2>&1 || warn "Не удалось добавить правило UFW 443/udp"
+  cat > /etc/sysctl.d/99-quic.conf <<EOF
+# буферы для QUIC / Hysteria2 (рекомендация quic-go)
+net.core.rmem_max=7500000
+net.core.wmem_max=7500000
+EOF
+  sysctl --system >/dev/null 2>&1 || true
+  write_renew_hook
 }
 
 setup_bbr() {
@@ -468,12 +499,7 @@ issue_cert() {
     --keep-until-expiring \
     || die "Не удалось выпустить сертификат. Проверь A-запись домена и доступность порта 80 снаружи."
 
-  mkdir -p /etc/letsencrypt/renewal-hooks/deploy
-  cat > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh <<'EOF'
-#!/bin/sh
-systemctl reload nginx
-EOF
-  chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+  write_renew_hook
   systemctl enable --now certbot.timer >/dev/null 2>&1 || true
 }
 
@@ -554,10 +580,11 @@ EOF
   [[ -S $SOCK ]] || warn "Сокет ${SOCK} не появился, проверь: systemctl status nginx"
 }
 
-# Добавляет том /dev/shm в сервис remnawave/node. Печатает новый файл в stdout.
+# Добавляет том в сервис remnawave/node. Печатает новый файл в stdout.
+# $1 файл, $2 том (например /dev/shm:/dev/shm), $3 regex: если он уже есть в сервисе, том не добавляется.
 # Коды выхода: 0 изменено, 10 уже есть, 3 нестандартный volumes, 4 сервис не найден.
 patch_compose() {
-  awk -v item="'/dev/shm:/dev/shm'" '
+  awk -v item="'$2'" -v pat="$3" '
   function ind(s) { match(s, /^ */); return RLENGTH }
   function blank(s) { return s ~ /^[ \t\r]*$/ }
   function comment(s) { return s ~ /^ *#/ }
@@ -581,7 +608,7 @@ patch_compose() {
     }
     v = 0
     for (i = s; i <= e; i++) {
-      if (L[i] ~ /\/dev\/shm/) exit 10
+      if (L[i] ~ pat) exit 10
       if (ind(L[i]) == K && L[i] ~ /^ +volumes:/) v = i
     }
     pad0 = sprintf("%" K "s", "")
@@ -634,14 +661,15 @@ find_node_compose() {
   [[ -n $NODE_COMPOSE ]]
 }
 
-# Если remnanode уже установлен: добавляем том /dev/shm и пересоздаём контейнер. Иначе пропускаем.
+# Если remnanode уже установлен: добавляем тома /dev/shm (сокет nginx) и /etc/letsencrypt
+# (сертификат для Hysteria2) и пересоздаём контейнер. Иначе пропускаем.
 setup_node() {
-  NODE_STATE="absent"; NODE_BAK=""; NODE_COMPOSE=""
+  NODE_STATE="absent"; NODE_BAK=""; NODE_COMPOSE=""; NODE_CERT=0
 
   if ! find_node_compose; then
     if command -v docker >/dev/null 2>&1 && docker inspect --type container remnanode >/dev/null 2>&1; then
       NODE_STATE="manual"
-      warn "Контейнер remnanode есть, но его docker-compose.yml не найден. Том нужно добавить вручную."
+      warn "Контейнер remnanode есть, но его docker-compose.yml не найден. Тома нужно добавить вручную."
     else
       log "remnanode не установлен, пропускаю"
     fi
@@ -649,26 +677,40 @@ setup_node() {
   fi
 
   log "Найден remnanode: $NODE_COMPOSE"
-  local tmp rc=0 cid
-  tmp="$(mktemp)"
-  patch_compose "$NODE_COMPOSE" > "$tmp" || rc=$?
-  case $rc in
-    0) ;;
-    10) rm -f "$tmp"; NODE_STATE="already"; log "Том /dev/shm уже есть в compose, пропускаю"; return 0 ;;
-    *)  rm -f "$tmp"; NODE_STATE="manual"
-        warn "Не удалось автоматически изменить compose (код $rc). Том нужно добавить вручную."
-        return 0 ;;
-  esac
+  local cur tmp rc spec item pat changed=0 cid sock_ok=0
+  cur="$(mktemp)"; tmp="$(mktemp)"
+  cat "$NODE_COMPOSE" > "$cur"
+
+  for spec in "/dev/shm:/dev/shm|/dev/shm" "/etc/letsencrypt:/etc/letsencrypt:ro|/etc/letsencrypt"; do
+    item="${spec%%|*}"; pat="${spec##*|}"
+    rc=0
+    patch_compose "$cur" "$item" "$pat" > "$tmp" || rc=$?
+    case $rc in
+      0)  cat "$tmp" > "$cur"; changed=1 ;;
+      10) log "Том ${pat} уже есть в compose" ;;
+      *)  rm -f "$cur" "$tmp"; NODE_STATE="manual"
+          warn "Не удалось автоматически изменить compose (код $rc). Тома нужно добавить вручную."
+          return 0 ;;
+    esac
+  done
+  rm -f "$tmp"
+
+  if (( ! changed )); then
+    rm -f "$cur"
+    NODE_STATE="already"
+    log "Нужные тома уже есть в compose, пропускаю"
+    return 0
+  fi
 
   NODE_BAK="${NODE_COMPOSE}.bak-selfsni-$(date +%Y%m%d%H%M%S)"
   cp -p "$NODE_COMPOSE" "$NODE_BAK"
-  cat "$tmp" > "$NODE_COMPOSE"
-  rm -f "$tmp"
+  cat "$cur" > "$NODE_COMPOSE"
+  rm -f "$cur"
 
   if ! dc -f "$NODE_COMPOSE" config -q >/dev/null 2>&1; then
     cp -p "$NODE_BAK" "$NODE_COMPOSE"
     NODE_STATE="manual"
-    warn "После правки compose не прошёл проверку, вернул оригинал. Том нужно добавить вручную."
+    warn "После правки compose не прошёл проверку, вернул оригинал. Тома нужно добавить вручную."
     return 0
   fi
 
@@ -682,21 +724,25 @@ setup_node() {
   sleep 4
   cid="$(dc -f "$NODE_COMPOSE" ps -q 2>/dev/null | head -n1 || true)"
   [[ -n $cid ]] || cid="remnanode"
-  if docker exec "$cid" test -S "$SOCK" 2>/dev/null; then
+  docker exec "$cid" test -S "$SOCK" 2>/dev/null && sock_ok=1
+  docker exec "$cid" test -r "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" 2>/dev/null && NODE_CERT=1
+
+  if (( sock_ok )); then
     NODE_STATE="ok"
     log "Нода перезапущена, сокет виден внутри контейнера"
   else
     NODE_STATE="nosocket"
     warn "Нода перезапущена, но сокет внутри контейнера не виден: docker exec remnanode ls -l ${SOCK}"
   fi
+  (( NODE_CERT )) || warn "Сертификат ${DOMAIN} внутри контейнера не виден (нужен только для Hysteria2): docker exec remnanode ls -l /etc/letsencrypt/live/${DOMAIN}/"
 }
 
 summary() {
   local node_msg
   case ${NODE_STATE:-absent} in
-    ok)       node_msg="remnanode: том /dev/shm добавлен в ${NODE_COMPOSE}, нода перезапущена,
-    сокет виден внутри контейнера. Бэкап: ${NODE_BAK}" ;;
-    already)  node_msg="remnanode: том /dev/shm уже был в ${NODE_COMPOSE}, ничего не менял." ;;
+    ok)       node_msg="remnanode: тома /dev/shm и /etc/letsencrypt добавлены в ${NODE_COMPOSE},
+    нода перезапущена, сокет виден внутри контейнера. Бэкап: ${NODE_BAK}" ;;
+    already)  node_msg="remnanode: нужные тома уже были в ${NODE_COMPOSE}, ничего не менял." ;;
     nosocket) node_msg="remnanode: том добавлен и нода перезапущена, но сокет в контейнере не виден.
     Проверь: docker exec remnanode ls -l ${SOCK}  (бэкап: ${NODE_BAK})" ;;
     failed)   node_msg="remnanode: compose изменён, но перезапуск не удался. Бэкап: ${NODE_BAK}
@@ -704,10 +750,12 @@ summary() {
     manual)   node_msg="remnanode: автоматически не получилось. Добавь в docker-compose.yml ноды:
       volumes:
         - '/dev/shm:/dev/shm'
+        - '/etc/letsencrypt:/etc/letsencrypt:ro'
     и выполни: docker compose up -d" ;;
     *)        node_msg="remnanode не найден. При установке ноды добавь в её docker-compose.yml:
       volumes:
-        - '/dev/shm:/dev/shm'" ;;
+        - '/dev/shm:/dev/shm'
+        - '/etc/letsencrypt:/etc/letsencrypt:ro'" ;;
   esac
 
   cat <<EOF
@@ -718,8 +766,8 @@ summary() {
  Сайт:        ${WEBROOT}
  nginx:       слушает сокет ${SOCK} (порт 443 свободен для Xray)
  Сертификат:  /etc/letsencrypt/live/${DOMAIN}/ (автопродление включено)
- UFW:         22, 80, 443, 4443, 8443 для всех; 2222 только для: ${PANEL_IP}
- BBR:         включён
+ UFW:         22, 80, 443 (tcp и udp), 4443, 8443 для всех; 2222 только для: ${PANEL_IP}
+ BBR:         включён; буферы UDP увеличены (для Hysteria2)
 
  ${node_msg}
 
@@ -731,6 +779,17 @@ summary() {
         ...privateKey и shortIds как обычно...
       }
  Если панель не принимает "target", используй "dest".
+
+ Hysteria2 (по желанию): в Config Profile inbound "hysteria" на порт 443 (UDP):
+      "streamSettings": {
+        "network": "hysteria", "security": "tls",
+        "tlsSettings": {
+          "serverName": "${DOMAIN}", "alpn": ["h3"],
+          "certificates": [{
+            "certificateFile": "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem",
+            "keyFile": "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" }] },
+        "hysteriaSettings": { "version": 2 } }
+ Нужны Remnawave 2.8+ и свежая нода (Xray 26.3+).
 
  Проверка: открой https://${DOMAIN} в браузере (после применения профиля).
 ==================================================================
@@ -797,7 +856,7 @@ update_mode() {
   [[ "$new_ip" != "$(norm_ips "$OLD_PANEL_IP")" ]] && ip_changed=1
 
   if (( ! dom_changed && ! ip_changed )); then
-    warn "Ничего не изменилось. Для обновления нужно поменять домен или IP панели."
+    log "Домен и IP панели не менялись. Подготовка Hysteria2 уже применена (если её не было, она добавлена)."
     return 0
   fi
 
@@ -847,6 +906,8 @@ EOF2
      ${OLD_DOMAIN} на ${DOMAIN} (оба inbound: 443 и 4443)
    - в Hosts поменяй SNI/Host на ${DOMAIN}
    - если у хостов в Address был старый домен, обнови и его
+   - если используешь Hysteria2: в certificateFile/keyFile и serverName замени
+     путь /etc/letsencrypt/live/${OLD_DOMAIN}/ на /etc/letsencrypt/live/${DOMAIN}/
 EOF2
   fi
   if (( CHANGED_IP )); then
@@ -872,9 +933,12 @@ main() {
     echo "    Домен:       ${OLD_DOMAIN:-не определён}"
     echo "    IP панели:   ${OLD_PANEL_IP:-не определён}"
     local ans=""
-    if [[ ${UPDATE:-0} == 1 ]]; then ans="y"; else ask ans "Запустить режим обновления (смена домена и/или IP панели)? [y/N]: "; fi
+    if [[ ${UPDATE:-0} == 1 ]]; then ans="y"; else ask ans "Запустить режим обновления (подготовка Hysteria2, смена домена и/или IP панели)? [y/N]: "; fi
     [[ $ans =~ ^[Yy]$ ]] || { log "Ничего не меняю."; return 0; }
     [[ -n $OLD_DOMAIN ]] || die "Не удалось определить текущий домен, обновление невозможно"
+    DOMAIN="$OLD_DOMAIN"
+    setup_hysteria
+    setup_node
     update_mode
     return 0
   fi
@@ -884,6 +948,7 @@ main() {
   setup_system
   setup_ufw
   setup_bbr
+  setup_hysteria
   setup_site
   setup_nginx_http
   issue_cert
